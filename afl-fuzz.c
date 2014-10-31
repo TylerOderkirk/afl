@@ -45,7 +45,6 @@
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <arpa/inet.h>
 #include <sys/resource.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
@@ -94,6 +93,7 @@ static u32 queued_paths,              /* Total number of queued testcases */
            queued_variable,           /* Testcases with variable behavior */
            queued_at_start,           /* Total number of initial inputs   */
            queued_later_on,           /* Items queued after 1st cycle     */
+           queued_imported,           /* Items imported via -S            */
            queued_favored,            /* Paths deemed favorable           */
            queued_with_cov,           /* Paths with new coverage bytes    */
            pending_not_fuzzed,        /* Queued but not done yet          */
@@ -998,23 +998,52 @@ static void init_forkserver(char** argv) {
   if (waitpid(forksrv_pid, &status, WUNTRACED) <= 0)
     PFATAL("waitpid() failed");
 
-  if (WIFSIGNALED(status)) 
+  if (WIFSIGNALED(status)) {
+
+    SAYF("\n" cLRD "[-] " cRST
+         "Whoops, the fork server died before doing anything useful! There are\n"
+         "    several possible causes of this:\n\n"
+
+         "    - The default memory limit (%u MB) is too low for this program, causing\n"
+         "      it to die due to OOM very early on (e.g., in the dynamic linker). You can\n"
+         "      try bumping the limit up with the -m setting in the command line.\n\n"
+
+         "    - The binary always crashes when executed for some intrinsic reason beyond\n"
+         "      our control. If so, you probably need to fix the underlying problem or\n"
+         "      find a more suitable replacement.\n\n"
+
+         "    - Least likely, there is a horrible bug in the fuzzer. If other options\n"
+         "      fail, poke <lcamtuf@coredump.cx>.\n", MEM_LIMIT);
+
     FATAL("Fork server crashed with signal %d", WTERMSIG(status));
+
+  }
+
 
   if (WEXITSTATUS(status) == EXEC_FAIL)
     FATAL("Unable to execute target application ('%s')", argv[0]);
 
   SAYF("\n" cLRD "[-] " cRST
-       "Hmm, looks like the target binary is not instrumented. The fuzzer depends\n"
-       "    on compile-time instrumentation to find interesting test cases. For\n"
-       "    more info and for instructions on how to instrument binaries, please\n"
-       "    consult the README.\n\n"
+       "Hmm, looks like the target binary terminated before we could establish a\n"
+       "    connection to the fork server. There are three possible explanations:\n\n"
 
-       "    In some cases, you may want to use afl-fuzz as a traditional, \"dumb\"\n"
-       "    fuzzer. If that's the intent, specify the -n option (but expect it to\n"
-       "    perform much worse than with the instrumentation in place).\n");
+       "    - The binary is not instrumented. The fuzzer depends on compile-time\n"
+       "      instrumentation to find interesting test cases. For more info on this,\n"
+       "      and for instructions on how to instrument binaries, please consult the\n"
+       "      README.\n\n"
 
-  FATAL("No instrumentation detected");
+       "      (In some cases, you may want to use afl-fuzz as a traditional, \"dumb\"\n"
+       "      fuzzer. If that's the intent, specify the -n option - but expect it to\n"
+       "      perform much worse than with the instrumentation in place).\n"
+
+       "    - The default memory limit (%u MB) is too low for this program, causing it\n"
+       "      to die due to OOM very early on (e.g., in the dynamic linker). You can\n"
+       "      try bumping the limit up with the -m setting in the command line.\n\n"
+
+       "    - Least likely, there is a horrible bug in the fuzzer. If other options\n"
+       "      fail, poke <lcamtuf@coredump.cx>.\n", MEM_LIMIT);
+
+  FATAL("No instrumentation detected or fork server fault");
 
 }
 
@@ -1358,7 +1387,7 @@ static void perform_dry_run(char** argv) {
     u8  res;
     u8* fn = strrchr(q->fname, '/') + 1;
 
-    ACTF("Performing dry runs with '%s'...", fn);
+    ACTF("Attempting dry run with '%s'...", fn);
 
     res = calibrate_case(argv, q, 0, 0, 0);
     if (stop_soon) return;
@@ -1388,10 +1417,19 @@ static void perform_dry_run(char** argv) {
       case FAULT_CRASH:  
 
         SAYF("\n" cLRD "[-] " cRST
+             "Oops, the program crashed with one of the test cases provided. There are\n"
+             "    several possible explanations:\n\n"
 
-             "Oops, the program crashed with one of the test cases provided!\n"
-             "    Please use starting test cases that exercise interesting features,\n"
-             "    but do not crash the targeted program outright.\n");
+             "    - The test case causes known crashes under normal working conditions. If\n"
+             "      so, please remove it. The fuzzer should be seeded with interesting\n"
+             "      inputs - but not ones that cause an outright crash.\n\n"
+
+             "    - The default memory limit (%u MB) is too low for this program, causing\n"
+             "      it to die due to OOM even for valid input files. To fix this, try\n"
+             "      bumping it up with the -m setting in the command line.\n\n"
+
+             "    - Least likely, there is a horrible bug in the fuzzer. If other options\n"
+             "      fail, poke <lcamtuf@coredump.cx>.\n", MEM_LIMIT);
 
         FATAL("Test case '%s' results in a crash", fn);
 
@@ -1966,8 +2004,17 @@ static void show_stats(void) {
           DI(stage_finds[STAGE_INTEREST16]), DI(stage_cycles[STAGE_INTEREST16]),
           DI(stage_finds[STAGE_INTEREST32]), DI(stage_cycles[STAGE_INTEREST32]));
 
-  SAYF(bV bSTOP "  known ints : " cNOR "%-37s " bSTG bV bSTOP "   latent : "
-       cNOR "%-11s " bSTG bV "\n", tmp, DI(queued_later_on));
+  if (sync_id) {
+
+    SAYF(bV bSTOP "  known ints : " cNOR "%-37s " bSTG bV bSTOP " imported : "
+         cNOR "%-11s " bSTG bV "\n", tmp, DI(queued_imported));
+
+  } else {
+
+    SAYF(bV bSTOP "  known ints : " cNOR "%-37s " bSTG bV bSTOP "   latent : "
+         cNOR "%-11s " bSTG bV "\n", tmp, DI(queued_later_on));
+
+  }
 
   sprintf(tmp, "%s/%s, %s/%s",
           DI(stage_finds[STAGE_HAVOC]), DI(stage_cycles[STAGE_HAVOC]),
@@ -2019,9 +2066,11 @@ static void show_init_stats(void) {
   if (!resuming_fuzz) {
 
     if (max_len > 50 * 1024)
-      WARNF(cLRD "Some test cases are huge (%sB) - reduce size!", DI(max_len));
+      WARNF(cLRD "Some test cases are huge (%sB) - reduce size%s!", DI(max_len),
+            skip_deterministic ? "" : " or use -d");
     else if (max_len > 10 * 1024)
-      WARNF("Some test cases are big (%sB) - try trimming down.", DI(max_len));
+      WARNF("Some test cases are big (%sB) - try trimming down%s.", DI(max_len),
+            skip_deterministic ? "" : " or using -d");
 
     if (useless_at_start)
       WARNF(cLRD "Some test cases look useless. Consider using a smaller set.");
@@ -3310,6 +3359,7 @@ static void sync_fuzzers(char** argv) {
   DIR* sd;
   struct dirent* sd_ent;
   u32 sync_cnt = 0;
+  u32 orig_queued = queued_paths;
 
   sd = opendir(sync_dir);
   if (!sd) PFATAL("Unable to open '%s'", sync_dir);
@@ -3428,6 +3478,8 @@ static void sync_fuzzers(char** argv) {
   }  
 
   closedir(sd);
+
+  queued_imported += queued_paths - orig_queued;
 
 }
 
@@ -3660,7 +3712,7 @@ static void setup_dirs_fds(void) {
            "    have two options:\n\n"
 
            "    - To start over, delete the directory first. The fuzzer won't do this for\n"
-           "      you to void accidentally deleting your work.\n\n"
+           "      you to void accidentally deleting days or weeks worth of work.\n\n"
 
            "    - To resume the fuzzing session, use the queue/ subdirectory in the output\n"
            "      dir as the *input* for the new session, and point the -o option\n"
@@ -3741,7 +3793,7 @@ static void check_coredumps(void) {
          "Hmm, your system is configured to send core dump notifications to an\n"
          "    external utility. This will cause issues due to an extended delay\n"
          "    between the fuzzed binary malfunctioning and this information being\n"
-         "    relayed to the fuzzer.\n\n"
+         "    eventually relayed to the fuzzer via the standard waitpid() API.\n\n"
 
          "    To avoid having crashes misinterpreted as hangs, please log in as root\n" 
          "    and temporarily modify /proc/sys/kernel/core_pattern, like so:\n\n"
@@ -3769,7 +3821,7 @@ static void fix_up_sync(void) {
 
   while (*x) {
 
-    if (!isalnum(*x) && *x != '_')
+    if (!isalnum(*x) && *x != '_' && *x != '-')
       FATAL("Non-alphanumeric fuzzer ID specified via -S");
 
     x++;

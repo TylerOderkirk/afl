@@ -1,8 +1,36 @@
 --------------
+Version 0.42b:
+--------------
+
+  - Red zone fix for 64-bit (oops!).
+
+  - Horribly experimental ARM support in experimental/arm_support.
+
+--------------
+Version 0.41b:
+--------------
+
+  - Fork server fix for processes that call execve().
+
+  - Minor compatibility fixes to Makefile, afl-gcc (reported by jwilk).
+
+  - Fixes to triage_crashes.sh (ditto).
+
+  - Multiple instrumentation performance improvements.
+
+  - Visual indication of the number of imported paths.
+
+  - Fix to afl-showmap.
+
+  - Much better messages for crashes early on.
+
+--------------
 Version 0.40b:
 --------------
 
   - Proper support for parallelized fuzzing.
+
+  - Added an example in experimental/distributed_fuzzing/
 
 --------------
 Version 0.39b:

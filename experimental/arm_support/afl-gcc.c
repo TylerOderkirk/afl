@@ -24,6 +24,8 @@
    hardening options that may help detect memory management issues more
    reliably. Depending on config.h, this may include enabling ASAN.
 
+   *** EXPERIMENTAL ARM VERSION ***
+
  */
 
 #define AFL_MAIN
@@ -127,22 +129,10 @@ static void edit_params(u32 argc, char** argv) {
 
     }
 
-#ifndef USE_64BIT
-
-    if (!strcmp(cur, "-m64")) {
-      WARNF("64-bit compilation attempted, overriding (USE_64BIT not set)");
+    if (!strcmp(cur, "-mthumb")) {
+      WARNF("Thumb-mode compilation attempted, overriding");
       continue;
     }
-
-#else
-
-    if (!strcmp(cur, "-m32")) {
-      WARNF("32-bit compilation attempted, overriding (USE_64BIT set)");
-      continue;
-    }
-
-#endif /* ^!USE_64BIT */
-
 
     if (!strcmp(cur, "-pipe")) continue;
 
@@ -155,12 +145,7 @@ static void edit_params(u32 argc, char** argv) {
   gcc_params[gcc_par_cnt++] = "-B";
   gcc_params[gcc_par_cnt++] = as_path;
   gcc_params[gcc_par_cnt++] = "-g";
-
-#ifndef USE_64BIT
-  gcc_params[gcc_par_cnt++] = "-m32";
-#else
-  gcc_params[gcc_par_cnt++] = "-m64";
-#endif /* ^!USE_64BIT */
+  gcc_params[gcc_par_cnt++] = "-marm";
 
   if (getenv("AFL_HARDEN")) {
 
@@ -168,6 +153,7 @@ static void edit_params(u32 argc, char** argv) {
 
 #ifdef USE_ASAN
     gcc_params[gcc_par_cnt++] = "-fsanitize=address";
+    gcc_params[gcc_par_cnt++] = "-fsanitize=memory";
 #endif /* USE_ASAN */
 
     if (!fortify_set)

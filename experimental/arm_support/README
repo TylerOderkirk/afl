@@ -1,0 +1,11 @@
+This directory contains replacement files that should enable experimental
+ARMv7 instrumentation in place of the default x86 code.
+
+This code is confirmed to work only insofar that it allows libpng and jpeg9c
+to be compiled and run without catching fire - but it certainly isn't as
+well-tested or as optimized as its x86 counterpart.
+
+To use: copy the files to the main afl source code directory (../../),
+overwriting the original versions of these files; type in 'make clean all';
+and cross your fingers for good measure.
+
